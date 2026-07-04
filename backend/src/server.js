@@ -44,33 +44,43 @@ const seedData = async () => {
       console.log('✅ Seeded default membership plans');
     }
 
-    // 4. Seed Seats
-    const seatCount = await Seat.countDocuments({});
-    if (seatCount === 0) {
-      const defaultSeats = [];
-      
-      // Floor 1, Room A (10 Seats)
-      for (let i = 1; i <= 10; i++) {
-        defaultSeats.push({
-          seatNumber: `A-${String(i).padStart(2, '0')}`,
+    // 4. Seed Seats (Ensure 100 seats exist: 50 on Floor 1, 50 on Floor 2)
+    let seatsAdded = 0;
+
+    // Floor 1 (Desks A-01 to A-50)
+    for (let i = 1; i <= 50; i++) {
+      const seatNum = `A-${String(i).padStart(2, '0')}`;
+      const exists = await Seat.findOne({ seatNumber: seatNum });
+      if (!exists) {
+        await Seat.create({
+          seatNumber: seatNum,
           floor: 'Floor 1',
           room: 'Room A',
           status: 'available',
         });
+        seatsAdded++;
       }
+    }
 
-      // Floor 2, Room B (10 Seats)
-      for (let i = 1; i <= 10; i++) {
-        defaultSeats.push({
-          seatNumber: `B-${String(i).padStart(2, '0')}`,
+    // Floor 2 (Desks B-01 to B-50)
+    for (let i = 1; i <= 50; i++) {
+      const seatNum = `B-${String(i).padStart(2, '0')}`;
+      const exists = await Seat.findOne({ seatNumber: seatNum });
+      if (!exists) {
+        await Seat.create({
+          seatNumber: seatNum,
           floor: 'Floor 2',
           room: 'Room B',
-          status: i % 4 === 0 ? 'maintenance' : 'available', // Seed a couple maintenance seats
+          status: i % 10 === 0 ? 'maintenance' : 'available',
         });
+        seatsAdded++;
       }
+    }
 
-      await Seat.insertMany(defaultSeats);
-      console.log('✅ Seeded 20 default seats layout');
+    if (seatsAdded > 0) {
+      console.log(`✅ Seeded ${seatsAdded} new desks to reach 100 seats total layout`);
+    } else {
+      console.log('✅ Seating database verified: 100 seats already active');
     }
   } catch (error) {
     console.error('❌ Data seeding error:', error);
