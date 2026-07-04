@@ -11,6 +11,7 @@ import {
   Armchair,
   X,
   AlertTriangle,
+  PlusCircle,
 } from 'lucide-react';
 
 const AdminStudents = () => {
@@ -25,6 +26,81 @@ const AdminStudents = () => {
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+
+  // Add student modal states
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [plans, setPlans] = useState([]);
+  const [newStudent, setNewStudent] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    password: '',
+    planId: '',
+    seatId: '',
+  });
+
+  const fetchPlansAndAvailableSeats = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      // Fetch plans
+      const plansRes = await fetch(`${API_BASE}/plans`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (plansRes.ok) {
+        const plansData = await plansRes.json();
+        setPlans(plansData);
+      }
+      
+      // Fetch seats
+      const seatsRes = await fetch(`${API_BASE}/seats`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (seatsRes.ok) {
+        const seatsData = await seatsRes.json();
+        const available = seatsData.filter((s) => s.status === 'available');
+        setSeats(available);
+      }
+    } catch (err) {
+      console.error('Error fetching onboarding data:', err);
+    }
+  };
+
+  const openAddModal = () => {
+    setNewStudent({ name: '', email: '', phone: '', password: '', planId: '', seatId: '' });
+    fetchPlansAndAvailableSeats();
+    setAddModalOpen(true);
+  };
+
+  const handleCreateStudent = async (e) => {
+    e.preventDefault();
+    setSuccess('');
+    setError('');
+    setActionLoading(true);
+
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/admin/students`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(newStudent),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Failed to create student');
+
+      setSuccess(`Student "${newStudent.name}" registered successfully with ID ${data.studentId}.`);
+      setAddModalOpen(false);
+      setNewStudent({ name: '', email: '', phone: '', password: '', planId: '', seatId: '' });
+      fetchStudents();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   const fetchStudents = async () => {
     try {
@@ -165,6 +241,13 @@ const AdminStudents = () => {
           <h1 className="text-2xl sm:text-3xl font-extrabold text-white">Student Management</h1>
           <p className="text-slate-400 text-sm">Review registered students list, account suspensions, and seat requests.</p>
         </div>
+        <button
+          onClick={openAddModal}
+          className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-2.5 rounded-xl flex items-center justify-center space-x-2 shadow-lg shadow-indigo-950 transition-all self-start"
+        >
+          <PlusCircle className="h-5 w-5" />
+          <span>Add New Student</span>
+        </button>
       </div>
 
       {success && (
@@ -361,6 +444,125 @@ const AdminStudents = () => {
                 className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 rounded-xl flex items-center justify-center space-x-2 transition-all disabled:opacity-50 mt-4"
               >
                 {actionLoading ? 'Assigning...' : 'Assign Seat Now'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Register Student Modal */}
+      {addModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 relative shadow-2xl">
+            <button
+              onClick={() => setAddModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <h3 className="text-xl font-bold text-white mb-2 flex items-center space-x-2">
+              <Users className="h-5 w-5 text-indigo-400" />
+              <span>Register New Student</span>
+            </h3>
+            <p className="text-slate-400 text-xs mb-6">Create a student account and optionally assign a plan & seat immediately.</p>
+
+            <form onSubmit={handleCreateStudent} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Full Name</label>
+                <input
+                  type="text"
+                  required
+                  value={newStudent.name}
+                  onChange={(e) => setNewStudent({ ...newStudent, name: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none placeholder-slate-600"
+                  placeholder="e.g. Ramesh Kumar"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Email Address</label>
+                  <input
+                    type="email"
+                    required
+                    value={newStudent.email}
+                    onChange={(e) => setNewStudent({ ...newStudent, email: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none placeholder-slate-600"
+                    placeholder="e.g. ramesh@gmail.com"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Phone Number</label>
+                  <input
+                    type="tel"
+                    required
+                    value={newStudent.phone}
+                    onChange={(e) => setNewStudent({ ...newStudent, phone: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none placeholder-slate-600"
+                    placeholder="e.g. 9876543210"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Login Password</label>
+                <input
+                  type="password"
+                  required
+                  minLength="6"
+                  value={newStudent.password}
+                  onChange={(e) => setNewStudent({ ...newStudent, password: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none placeholder-slate-600"
+                  placeholder="Minimum 6 characters"
+                />
+              </div>
+
+              <div className="border-t border-slate-900 pt-4 mt-2 space-y-4">
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Seat Assignment (Optional)</span>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-450 mb-1.5">Membership Plan</label>
+                    <select
+                      value={newStudent.planId}
+                      onChange={(e) => setNewStudent({ ...newStudent, planId: e.target.value, seatId: e.target.value ? newStudent.seatId : '' })}
+                      className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-2.5 text-xs focus:border-indigo-500 focus:outline-none cursor-pointer"
+                    >
+                      <option value="">No Plan (None)</option>
+                      {plans.map((p) => (
+                        <option key={p._id} value={p._id}>
+                          {p.planName} (₹{p.price})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-450 mb-1.5">Available Seat Desk</label>
+                    <select
+                      value={newStudent.seatId}
+                      disabled={!newStudent.planId}
+                      onChange={(e) => setNewStudent({ ...newStudent, seatId: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-2.5 text-xs focus:border-indigo-500 focus:outline-none cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed"
+                    >
+                      <option value="">No Seat (None)</option>
+                      {seats.map((s) => (
+                        <option key={s._id} value={s._id}>
+                          Seat {s.seatNumber} — {s.floor} ({s.room})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={actionLoading}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 rounded-xl flex items-center justify-center space-x-2 transition-all disabled:opacity-50 mt-4"
+              >
+                {actionLoading ? 'Registering...' : 'Register & Setup Onboarding'}
               </button>
             </form>
           </div>

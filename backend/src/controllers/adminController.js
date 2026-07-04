@@ -1,6 +1,7 @@
 const User = require('../models/userModel');
 const Seat = require('../models/seatModel');
 const Payment = require('../models/paymentModel');
+const Plan = require('../models/planModel');
 
 // @desc    Get Admin Dashboard Stats
 // @route   GET /api/admin/stats
@@ -174,10 +175,96 @@ const getDuesReport = async (req, res) => {
   }
 };
 
+// @desc    Admin manually registers a student + optional plan/seat assignment
+// @route   POST /api/admin/students
+// @access  Private/Admin
+const createStudentByAdmin = async (req, res) => {
+  const { name, email, phone, password, planId, seatId } = req.body;
+
+  if (!name || !email || !phone || !password) {
+    return res.status(400).json({ message: 'Name, email, phone, and password are required' });
+  }
+
+  try {
+    const userExists = await User.findOne({ email });
+    if (userExists) {
+      return res.status(400).json({ message: 'User already exists with this email' });
+    }
+
+    const studentCount = await User.countDocuments({ role: 'student' });
+    const studentId = `STU${1000 + studentCount + 1}`;
+
+    const student = await User.create({
+      name,
+      email,
+      phone,
+      password, // hashed by user model hooks
+      role: 'student',
+      studentId,
+      status: 'active',
+    });
+
+    // If plan and seat are selected, assign them immediately!
+    if (planId && seatId) {
+      const plan = await Plan.findById(planId);
+      const seat = await Seat.findById(seatId);
+
+      if (plan && seat && seat.status === 'available') {
+        const expiryDate = new Date();
+        expiryDate.setMonth(expiryDate.getMonth() + plan.duration);
+
+        // Update student seat request parameters
+        student.assignedSeat = seat._id;
+        student.seatRequest = {
+          status: 'approved',
+          plan: plan._id,
+          preferredFloor: seat.floor,
+          preferredRoom: seat.room,
+          requestDate: new Date(),
+        };
+        await student.save();
+
+        // Update seat to occupied
+        seat.status = 'occupied';
+        seat.assignedTo = student._id;
+        seat.assignedDate = new Date();
+        seat.expiryDate = expiryDate;
+        await seat.save();
+
+        // Automatically record and approve a mock Cash Payment for the package
+        await Payment.create({
+          student: student._id,
+          plan: plan._id,
+          amount: plan.price,
+          paymentMode: 'cash',
+          transactionId: `CSH-MAN-${Date.now().toString().slice(-6)}`,
+          status: 'approved',
+          paidDate: new Date(),
+        });
+      }
+    }
+
+    res.status(201).json({
+      _id: student._id,
+      name: student.name,
+      email: student.email,
+      phone: student.phone,
+      role: student.role,
+      studentId: student.studentId,
+      status: student.status,
+      assignedSeat: student.assignedSeat,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
 module.exports = {
   getDashboardStats,
   getStudents,
   updateStudent,
   deleteStudent,
   getDuesReport,
+  createStudentByAdmin,
 };
