@@ -22,6 +22,7 @@ const AdminStudents = () => {
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [activeRequest, setActiveRequest] = useState(null); // student object
   const [selectedSeatId, setSelectedSeatId] = useState('');
+  const [selectedShift, setSelectedShift] = useState('fullTime'); // 'morning', 'evening', 'fullTime'
   
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
@@ -37,6 +38,7 @@ const AdminStudents = () => {
     password: '',
     planId: '',
     seatId: '',
+    shift: 'fullTime',
   });
 
   const fetchPlansAndAvailableSeats = async () => {
@@ -50,15 +52,20 @@ const AdminStudents = () => {
         const plansData = await plansRes.json();
         setPlans(plansData);
       }
-      
       // Fetch seats
       const seatsRes = await fetch(`${API_BASE}/seats`, {
         headers: { 'Authorization': `Bearer ${token}` },
       });
       if (seatsRes.ok) {
         const seatsData = await seatsRes.json();
-        const available = seatsData.filter((s) => s.status === 'available');
-        setSeats(available);
+        const openSeats = seatsData.filter((s) => {
+          if (s.status === 'maintenance') return false;
+          const hasFullTime = !!s.fullTime?.student;
+          const hasMorning = !!s.morning?.student;
+          const hasEvening = !!s.evening?.student;
+          return !hasFullTime && (!hasMorning || !hasEvening);
+        });
+        setSeats(openSeats);
       }
     } catch (err) {
       console.error('Error fetching onboarding data:', err);
@@ -127,10 +134,16 @@ const AdminStudents = () => {
       });
       if (res.ok) {
         const data = await res.json();
-        const available = data.filter((s) => s.status === 'available');
-        setSeats(available);
-        if (available.length > 0) {
-          setSelectedSeatId(available[0]._id);
+        const openSeats = data.filter((s) => {
+          if (s.status === 'maintenance') return false;
+          const hasFullTime = !!s.fullTime?.student;
+          const hasMorning = !!s.morning?.student;
+          const hasEvening = !!s.evening?.student;
+          return !hasFullTime && (!hasMorning || !hasEvening);
+        });
+        setSeats(openSeats);
+        if (openSeats.length > 0) {
+          setSelectedSeatId(openSeats[0]._id);
         }
       }
     } catch (err) {
@@ -193,6 +206,7 @@ const AdminStudents = () => {
   // Open Seat Assignment modal
   const openAssignModal = (student) => {
     setActiveRequest(student);
+    setSelectedShift('fullTime');
     fetchAvailableSeats();
     setAssignModalOpen(true);
   };
@@ -217,6 +231,7 @@ const AdminStudents = () => {
           seatId: selectedSeatId,
           studentId: activeRequest._id,
           planId: activeRequest.seatRequest?.plan?._id,
+          shift: selectedShift,
         }),
       });
 
@@ -417,25 +432,60 @@ const AdminStudents = () => {
             </div>
 
             <form onSubmit={handleAssignSeatSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Select Available Seat</label>
-                {seats.length === 0 ? (
-                  <div className="p-3 bg-red-950/20 border border-red-900/40 text-red-400 rounded-xl text-xs">
-                    No available seats vacant. Create new seats or vacate occupied seats first.
-                  </div>
-                ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Select Desk</label>
+                  {seats.length === 0 ? (
+                    <div className="p-3 bg-red-950/20 border border-red-900/40 text-red-400 rounded-xl text-xs">
+                      No vacant desks available.
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedSeatId}
+                      onChange={(e) => {
+                        setSelectedSeatId(e.target.value);
+                        // Reset shift selection
+                        setSelectedShift('fullTime');
+                      }}
+                      className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none cursor-pointer"
+                    >
+                      {seats.map((s) => (
+                        <option key={s._id} value={s._id}>
+                          Desk {s.seatNumber} — {s.floor} ({s.room})
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Shift Slot</label>
                   <select
-                    value={selectedSeatId}
-                    onChange={(e) => setSelectedSeatId(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none cursor-pointer"
+                    value={selectedShift}
+                    disabled={!selectedSeatId}
+                    onChange={(e) => setSelectedShift(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none cursor-pointer disabled:opacity-35"
                   >
-                    {seats.map((s) => (
-                      <option key={s._id} value={s._id}>
-                        Seat {s.seatNumber} — {s.floor} ({s.room}) — {s.shift === 'full_day' ? 'Full Day' : s.shift + ' shift'}
-                      </option>
-                    ))}
+                    {(() => {
+                      const selectedSeatObj = seats.find((s) => s._id === selectedSeatId);
+                      const mOcc = !!selectedSeatObj?.morning?.student;
+                      const eOcc = !!selectedSeatObj?.evening?.student;
+                      return (
+                        <>
+                          <option value="fullTime" disabled={mOcc || eOcc}>
+                            Full Day {mOcc || eOcc ? '(Slots taken)' : ''}
+                          </option>
+                          <option value="morning" disabled={mOcc}>
+                            Morning {mOcc ? '(Taken)' : ''}
+                          </option>
+                          <option value="evening" disabled={eOcc}>
+                            Evening {eOcc ? '(Taken)' : ''}
+                          </option>
+                        </>
+                      );
+                    })()}
                   </select>
-                )}
+                </div>
               </div>
 
               <button
@@ -521,13 +571,13 @@ const AdminStudents = () => {
               <div className="border-t border-slate-900 pt-4 mt-2 space-y-4">
                 <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Seat Assignment (Optional)</span>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-450 mb-1.5">Membership Plan</label>
+                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-455 mb-1.5">Plan Package</label>
                     <select
                       value={newStudent.planId}
                       onChange={(e) => setNewStudent({ ...newStudent, planId: e.target.value, seatId: e.target.value ? newStudent.seatId : '' })}
-                      className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-2.5 text-xs focus:border-indigo-500 focus:outline-none cursor-pointer"
+                      className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-2.5 py-2.5 text-[11px] focus:border-indigo-500 focus:outline-none cursor-pointer"
                     >
                       <option value="">No Plan (None)</option>
                       {plans.map((p) => (
@@ -539,19 +589,48 @@ const AdminStudents = () => {
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-450 mb-1.5">Available Seat Desk</label>
+                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-455 mb-1.5">Desk Number</label>
                     <select
                       value={newStudent.seatId}
                       disabled={!newStudent.planId}
                       onChange={(e) => setNewStudent({ ...newStudent, seatId: e.target.value })}
-                      className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-2.5 text-xs focus:border-indigo-500 focus:outline-none cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed"
+                      className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-2.5 py-2.5 text-[11px] focus:border-indigo-500 focus:outline-none cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed"
                     >
                       <option value="">No Seat (None)</option>
                       {seats.map((s) => (
                         <option key={s._id} value={s._id}>
-                          Seat {s.seatNumber} — {s.floor} ({s.room}) — {s.shift === 'full_day' ? 'Full Day' : s.shift + ' shift'}
+                          Desk {s.seatNumber} ({s.room})
                         </option>
                       ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-455 mb-1.5">Shift Block</label>
+                    <select
+                      value={newStudent.shift}
+                      disabled={!newStudent.seatId}
+                      onChange={(e) => setNewStudent({ ...newStudent, shift: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-2.5 py-2.5 text-[11px] focus:border-indigo-500 focus:outline-none cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed"
+                    >
+                      {(() => {
+                        const selectedSeatObj = seats.find((s) => s._id === newStudent.seatId);
+                        const mOcc = !!selectedSeatObj?.morning?.student;
+                        const eOcc = !!selectedSeatObj?.evening?.student;
+                        return (
+                          <>
+                            <option value="fullTime" disabled={mOcc || eOcc}>
+                              Full Day {mOcc || eOcc ? '(Taken)' : ''}
+                            </option>
+                            <option value="morning" disabled={mOcc}>
+                              Morning {mOcc ? '(Taken)' : ''}
+                            </option>
+                            <option value="evening" disabled={eOcc}>
+                              Evening {eOcc ? '(Taken)' : ''}
+                            </option>
+                          </>
+                        );
+                      })()}
                     </select>
                   </div>
                 </div>

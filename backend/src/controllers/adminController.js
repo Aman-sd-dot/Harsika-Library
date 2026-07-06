@@ -179,7 +179,9 @@ const getDuesReport = async (req, res) => {
 // @route   POST /api/admin/students
 // @access  Private/Admin
 const createStudentByAdmin = async (req, res) => {
-  const { name, email, phone, password, planId, seatId } = req.body;
+  const { name, email, phone, password, planId, seatId, shift } = req.body;
+
+  const targetShift = shift || 'fullTime';
 
   if (!name || !email || !phone || !password) {
     return res.status(400).json({ message: 'Name, email, phone, and password are required' });
@@ -209,38 +211,53 @@ const createStudentByAdmin = async (req, res) => {
       const plan = await Plan.findById(planId);
       const seat = await Seat.findById(seatId);
 
-      if (plan && seat && seat.status === 'available') {
-        const expiryDate = new Date();
-        expiryDate.setMonth(expiryDate.getMonth() + plan.duration);
+      if (plan && seat) {
+        // Ensure slot is available
+        let slotAvailable = false;
+        if (targetShift === 'morning' && !seat.morning?.student && !seat.fullTime?.student) {
+          slotAvailable = true;
+        } else if (targetShift === 'evening' && !seat.evening?.student && !seat.fullTime?.student) {
+          slotAvailable = true;
+        } else if (targetShift === 'fullTime' && !seat.morning?.student && !seat.evening?.student && !seat.fullTime?.student) {
+          slotAvailable = true;
+        }
 
-        // Update student seat request parameters
-        student.assignedSeat = seat._id;
-        student.seatRequest = {
-          status: 'approved',
-          plan: plan._id,
-          preferredFloor: seat.floor,
-          preferredRoom: seat.room,
-          requestDate: new Date(),
-        };
-        await student.save();
+        if (slotAvailable && seat.status !== 'maintenance') {
+          const expiryDate = new Date();
+          expiryDate.setMonth(expiryDate.getMonth() + plan.duration);
 
-        // Update seat to occupied
-        seat.status = 'occupied';
-        seat.assignedTo = student._id;
-        seat.assignedDate = new Date();
-        seat.expiryDate = expiryDate;
-        await seat.save();
+          // Update student seat request parameters
+          student.assignedSeat = seat._id;
+          student.assignedShift = targetShift;
+          student.seatRequest = {
+            status: 'approved',
+            plan: plan._id,
+            preferredFloor: seat.floor,
+            preferredRoom: seat.room,
+            requestDate: new Date(),
+          };
+          await student.save();
 
-        // Automatically record and approve a mock Cash Payment for the package
-        await Payment.create({
-          student: student._id,
-          plan: plan._id,
-          amount: plan.price,
-          paymentMode: 'cash',
-          transactionId: `CSH-MAN-${Date.now().toString().slice(-6)}`,
-          status: 'approved',
-          paidDate: new Date(),
-        });
+          // Update seat slot to occupied
+          seat[targetShift] = {
+            student: student._id,
+            assignedDate: new Date(),
+            expiryDate,
+          };
+          seat.status = 'occupied';
+          await seat.save();
+
+          // Automatically record and approve a mock Cash Payment for the package
+          await Payment.create({
+            student: student._id,
+            plan: plan._id,
+            amount: plan.price,
+            paymentMode: 'cash',
+            transactionId: `CSH-MAN-${Date.now().toString().slice(-6)}`,
+            status: 'approved',
+            paidDate: new Date(),
+          });
+        }
       }
     }
 

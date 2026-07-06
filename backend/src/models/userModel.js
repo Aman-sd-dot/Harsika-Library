@@ -44,6 +44,11 @@ const userSchema = new mongoose.Schema(
       ref: 'Seat',
       default: null,
     },
+    assignedShift: {
+      type: String,
+      enum: ['morning', 'evening', 'fullTime', 'none'],
+      default: 'none',
+    },
     seatRequest: {
       status: {
         type: String,

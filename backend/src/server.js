@@ -44,13 +44,18 @@ const seedData = async () => {
       console.log('✅ Seeded default membership plans');
     }
 
-    // 4. Seed Seats (Ensure 100 seats exist: 50 on Floor 1, 50 on Floor 2)
+    // 4. Seed Seats (Ensure 100 seats exist on Floor 1 and have slot sub-documents)
+    const legacyCount = await Seat.countDocuments({ morning: { $exists: false } });
+    if (legacyCount > 0) {
+      console.log(`🗑️ Detected ${legacyCount} legacy seats. Clearing Seat collection for migration...`);
+      await Seat.deleteMany({});
+    }
+
     let seatsAdded = 0;
 
-    // Floor 1 (Desks A-01 to A-50)
-    for (let i = 1; i <= 50; i++) {
+    // Floor 1 (Desks A-01 to A-100)
+    for (let i = 1; i <= 100; i++) {
       const seatNum = `A-${String(i).padStart(2, '0')}`;
-      const shift = i <= 20 ? 'full_day' : 'morning';
 
       let seat = await Seat.findOne({ seatNumber: seatNum });
       if (!seat) {
@@ -58,45 +63,22 @@ const seedData = async () => {
           seatNumber: seatNum,
           floor: 'Floor 1',
           room: 'Room A',
-          shift,
           status: 'available',
+          morning: { student: null, assignedDate: null, expiryDate: null },
+          evening: { student: null, assignedDate: null, expiryDate: null },
+          fullTime: { student: null, assignedDate: null, expiryDate: null },
         });
         seatsAdded++;
-      } else {
-        if (seat.shift !== shift) {
-          seat.shift = shift;
-          await seat.save();
-        }
       }
     }
 
-    // Floor 2 (Desks B-01 to B-50)
-    for (let i = 1; i <= 50; i++) {
-      const seatNum = `B-${String(i).padStart(2, '0')}`;
-      const shift = i <= 30 ? 'evening' : 'full_day';
-
-      let seat = await Seat.findOne({ seatNumber: seatNum });
-      if (!seat) {
-        await Seat.create({
-          seatNumber: seatNum,
-          floor: 'Floor 2',
-          room: 'Room B',
-          shift,
-          status: i % 10 === 0 ? 'maintenance' : 'available',
-        });
-        seatsAdded++;
-      } else {
-        if (seat.shift !== shift) {
-          seat.shift = shift;
-          await seat.save();
-        }
-      }
-    }
+    // Clean up any stray Floor 2 seats
+    await Seat.deleteMany({ floor: 'Floor 2' });
 
     if (seatsAdded > 0) {
-      console.log(`✅ Seeded ${seatsAdded} new desks to reach 100 seats total layout`);
+      console.log(`✅ Seeded ${seatsAdded} new merged desks to reach 100 seats total on Floor 1`);
     } else {
-      console.log('✅ Seating database verified: 100 seats already active');
+      console.log('✅ Seating database verified: 100 merged seats active on Floor 1');
     }
   } catch (error) {
     console.error('❌ Data seeding error:', error);

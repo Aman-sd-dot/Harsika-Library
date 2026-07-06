@@ -23,23 +23,20 @@ const seatSchema = new mongoose.Schema(
       enum: ['available', 'occupied', 'maintenance'],
       default: 'available',
     },
-    shift: {
-      type: String,
-      enum: ['morning', 'evening', 'full_day'],
-      default: 'full_day',
+    morning: {
+      student: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      assignedDate: { type: Date, default: null },
+      expiryDate: { type: Date, default: null },
     },
-    assignedTo: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      default: null,
+    evening: {
+      student: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      assignedDate: { type: Date, default: null },
+      expiryDate: { type: Date, default: null },
     },
-    assignedDate: {
-      type: Date,
-      default: null,
-    },
-    expiryDate: {
-      type: Date,
-      default: null,
+    fullTime: {
+      student: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      assignedDate: { type: Date, default: null },
+      expiryDate: { type: Date, default: null },
     },
   },
   {

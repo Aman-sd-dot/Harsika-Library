@@ -21,6 +21,86 @@ const AdminSeats = () => {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [newSeat, setNewSeat] = useState({ seatNumber: '', floor: 'Floor 1', room: 'Room A', shift: 'full_day' });
   const [shiftFilter, setShiftFilter] = useState('all'); // 'all', 'morning', 'evening', 'full_day'
+
+  // Inline assignment states inside details modal
+  const [unassignedStudents, setUnassignedStudents] = useState([]);
+  const [plans, setPlans] = useState([]);
+  const [assigningSlot, setAssigningSlot] = useState(null); // 'morning', 'evening', 'fullTime' or null
+  const [selectedStudentId, setSelectedStudentId] = useState('');
+  const [selectedPlanId, setSelectedPlanId] = useState('');
+
+  const fetchUnassignedStudentsAndPlans = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      // Fetch students
+      const studentsRes = await fetch(`${API_BASE}/admin/students`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (studentsRes.ok) {
+        const studentsData = await studentsRes.json();
+        const unassigned = studentsData.filter((s) => !s.assignedSeat && s.role === 'student' && s.status === 'active');
+        setUnassignedStudents(unassigned);
+        if (unassigned.length > 0) {
+          setSelectedStudentId(unassigned[0]._id);
+        }
+      }
+      // Fetch plans
+      const plansRes = await fetch(`${API_BASE}/plans`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (plansRes.ok) {
+        const plansData = await plansRes.json();
+        setPlans(plansData);
+        if (plansData.length > 0) {
+          setSelectedPlanId(plansData[0]._id);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching assignment options:', err);
+    }
+  };
+
+  const triggerInlineAssign = (slot) => {
+    setAssigningSlot(slot);
+    fetchUnassignedStudentsAndPlans();
+  };
+
+  const handleInlineAssign = async (e, slot) => {
+    e.preventDefault();
+    if (!selectedStudentId || !selectedPlanId) return;
+    setSuccess('');
+    setError('');
+    setActionLoading(true);
+
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/seats/assign`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          seatId: selectedSeat._id,
+          studentId: selectedStudentId,
+          planId: selectedPlanId,
+          shift: slot,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Assignment failed');
+
+      setSuccess(`Desk assigned successfully to slot (${slot}).`);
+      setDetailModalOpen(false);
+      setAssigningSlot(null);
+      fetchSeats();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
   
   // Seat Details / Edit Modal
   const [selectedSeat, setSelectedSeat] = useState(null);
@@ -83,9 +163,9 @@ const AdminSeats = () => {
     }
   };
 
-  // Handle Vacate Seat
-  const handleVacateSeat = async (seatId) => {
-    if (!window.confirm('Are you sure you want to vacate this seat assignment?')) return;
+  // Handle Vacate Seat Slot
+  const handleVacateSeatSlot = async (seatId, shift) => {
+    if (!window.confirm(`Are you sure you want to vacate the ${shift} shift slot on this seat?`)) return;
     setSuccess('');
     setError('');
     setActionLoading(true);
@@ -98,13 +178,13 @@ const AdminSeats = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ seatId }),
+        body: JSON.stringify({ seatId, shift }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Vacate failed');
 
-      setSuccess('Seat vacated successfully.');
+      setSuccess(`Seat slot (${shift}) vacated successfully.`);
       setDetailModalOpen(false);
       fetchSeats();
     } catch (err) {
@@ -165,6 +245,7 @@ const AdminSeats = () => {
 
   const openDetailModal = (seat) => {
     setSelectedSeat(seat);
+    setAssigningSlot(null);
     setDetailModalOpen(true);
   };
 
@@ -275,8 +356,25 @@ const AdminSeats = () => {
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-4">
           {filteredSeats.map((seat) => {
-            const isOccupied = seat.status === 'occupied';
             const isMaint = seat.status === 'maintenance';
+            const morningOccupied = !!seat.morning?.student;
+            const eveningOccupied = !!seat.evening?.student;
+            const fullTimeOccupied = !!seat.fullTime?.student;
+            const isOccupied = morningOccupied || eveningOccupied || fullTimeOccupied;
+
+            // Determine status text
+            let statusText = 'Available';
+            if (isMaint) {
+              statusText = 'Maintenance';
+            } else if (fullTimeOccupied) {
+              statusText = `Full Time: ${seat.fullTime.student.name}`;
+            } else if (morningOccupied && eveningOccupied) {
+              statusText = `Morning & Evening occupied`;
+            } else if (morningOccupied) {
+              statusText = `Morning: ${seat.morning.student.name}`;
+            } else if (eveningOccupied) {
+              statusText = `Evening: ${seat.evening.student.name}`;
+            }
             
             // Dues-aware color styling classes
             let seatColorClass = 'bg-emerald-950/10 border-emerald-900/40 hover:bg-emerald-950/20';
@@ -287,21 +385,33 @@ const AdminSeats = () => {
               dotColorClass = 'bg-slate-500';
             } else if (isOccupied) {
               const today = new Date();
-              const expiry = seat.expiryDate ? new Date(seat.expiryDate) : null;
-              
-              if (expiry && today > expiry) {
+              let isExpired = false;
+              let isExpiringSoon = false;
+
+              const checkExpiry = (slot) => {
+                if (slot?.expiryDate) {
+                  const expiry = new Date(slot.expiryDate);
+                  if (today > expiry) {
+                    isExpired = true;
+                  } else {
+                    const diffDays = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
+                    if (diffDays <= 3) {
+                      isExpiringSoon = true;
+                    }
+                  }
+                }
+              };
+
+              if (fullTimeOccupied) checkExpiry(seat.fullTime);
+              if (morningOccupied) checkExpiry(seat.morning);
+              if (eveningOccupied) checkExpiry(seat.evening);
+
+              if (isExpired) {
                 seatColorClass = 'bg-red-950/35 border-red-800/60 hover:bg-red-950/50 text-red-250';
                 dotColorClass = 'bg-red-500 animate-pulse';
-              } else if (expiry) {
-                const diffTime = expiry - today;
-                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                if (diffDays <= 3) {
-                  seatColorClass = 'bg-amber-950/30 border-amber-800/50 hover:bg-amber-950/50 text-amber-250';
-                  dotColorClass = 'bg-amber-500';
-                } else {
-                  seatColorClass = 'bg-indigo-950/25 border-indigo-905/45 hover:bg-indigo-950/45 text-indigo-250';
-                  dotColorClass = 'bg-indigo-500';
-                }
+              } else if (isExpiringSoon) {
+                seatColorClass = 'bg-amber-950/30 border-amber-800/50 hover:bg-amber-950/50 text-amber-250';
+                dotColorClass = 'bg-amber-500';
               } else {
                 seatColorClass = 'bg-indigo-950/25 border-indigo-905/45 hover:bg-indigo-950/45 text-indigo-250';
                 dotColorClass = 'bg-indigo-500';
@@ -320,8 +430,8 @@ const AdminSeats = () => {
                 </div>
                 <div>
                   <h4 className="text-lg font-extrabold text-white">Desk {seat.seatNumber.split('-')[1] || seat.seatNumber}</h4>
-                  <p className="text-[10px] text-slate-400 capitalize mt-0.5 truncate max-w-full">
-                    {seat.shift === 'full_day' ? 'Full Day' : seat.shift + ' shift'} • {isOccupied ? seat.assignedTo?.name || 'Occupied' : seat.status}
+                  <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-full font-medium">
+                    {statusText}
                   </p>
                 </div>
               </button>
@@ -427,51 +537,311 @@ const AdminSeats = () => {
               <span>Desk {selectedSeat.seatNumber}</span>
             </h3>
             <p className="text-slate-450 text-xs mb-6 font-mono">
-              {selectedSeat.floor} • {selectedSeat.room} • <span className="capitalize font-bold text-slate-300">{selectedSeat.shift.replace('_', ' ')}</span>
-            </p>
-
-            {selectedSeat.status === 'occupied' && selectedSeat.assignedTo ? (
-              <div className="space-y-4 mb-6 border-b border-slate-800 pb-6">
-                <div className="bg-slate-950 p-4 rounded-2xl border border-slate-850 text-xs space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Student:</span>
-                    <span className="text-white font-bold">{selectedSeat.assignedTo.name}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Student ID:</span>
-                    <span className="text-white font-mono">{selectedSeat.assignedTo.studentId}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Phone:</span>
-                    <span className="text-white font-mono">{selectedSeat.assignedTo.phone}</span>
-                  </div>
-                  <div className="flex justify-between border-t border-slate-900 pt-2 mt-2">
-                    <span className="text-slate-500">Assigned Date:</span>
-                    <span className="text-white">
-                      {new Date(selectedSeat.assignedDate).toLocaleDateString()}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Expiry Date:</span>
-                    <span className="text-brand-400 font-bold">
-                      {new Date(selectedSeat.expiryDate).toLocaleDateString()}
-                    </span>
-                  </div>
+              {selectedSeat.floor} • {selectedSeat.room}
+            </p>          <div className="space-y-4 mb-6 border-b border-slate-800 pb-6 text-xs max-h-96 overflow-y-auto pr-1">
+              {/* Morning Shift Slot */}
+              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-850 space-y-3">
+                <div className="flex justify-between items-center pb-1.5 border-b border-slate-905">
+                  <span className="text-indigo-400 font-bold uppercase tracking-wider text-[10px]">Morning Shift (6 AM - 2 PM)</span>
+                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${selectedSeat.morning?.student ? 'bg-indigo-950/60 text-indigo-400' : 'bg-slate-900 text-slate-500'}`}>
+                    {selectedSeat.morning?.student ? 'Occupied' : 'Vacant'}
+                  </span>
                 </div>
+                {selectedSeat.morning?.student ? (
+                  <div className="space-y-2 text-slate-300">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Occupant:</span>
+                      <span className="text-white font-bold">{selectedSeat.morning.student.name} ({selectedSeat.morning.student.studentId})</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Phone:</span>
+                      <span className="text-white font-mono">{selectedSeat.morning.student.phone}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Expiry Date:</span>
+                      <span className="text-brand-400 font-bold">{new Date(selectedSeat.morning.expiryDate).toLocaleDateString()}</span>
+                    </div>
+                    <button
+                      onClick={() => handleVacateSeatSlot(selectedSeat._id, 'morning')}
+                      disabled={actionLoading}
+                      className="w-full bg-red-950/30 border border-red-900/40 hover:bg-red-950/50 text-red-400 py-1.5 rounded-lg font-bold transition-all text-[11px] mt-1.5"
+                    >
+                      Vacate Morning Slot
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    {assigningSlot === 'morning' ? (
+                      <form onSubmit={(e) => handleInlineAssign(e, 'morning')} className="mt-2.5 p-3 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
+                        <div>
+                          <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Select Student</label>
+                          {unassignedStudents.length === 0 ? (
+                            <p className="text-[10px] text-amber-500 font-medium">No unassigned active students found.</p>
+                          ) : (
+                            <select
+                              value={selectedStudentId}
+                              onChange={(e) => setSelectedStudentId(e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg px-2.5 py-1.5 text-[11px] focus:outline-none cursor-pointer"
+                            >
+                              {unassignedStudents.map((stu) => (
+                                <option key={stu._id} value={stu._id}>
+                                  {stu.name} ({stu.studentId})
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
 
-                <button
-                  onClick={() => handleVacateSeat(selectedSeat._id)}
-                  disabled={actionLoading}
-                  className="w-full bg-red-950/40 border border-red-900/60 hover:bg-red-950/60 text-red-400 py-3 rounded-xl font-bold transition-all"
-                >
-                  Vacate Assignment
-                </button>
+                        <div>
+                          <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Select Plan</label>
+                          <select
+                            value={selectedPlanId}
+                            onChange={(e) => setSelectedPlanId(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg px-2.5 py-1.5 text-[11px] focus:outline-none cursor-pointer"
+                          >
+                            {plans.map((p) => (
+                              <option key={p._id} value={p._id}>
+                                {p.planName} (₹{p.price})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="flex space-x-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setAssigningSlot(null)}
+                            className="flex-1 bg-slate-950 border border-slate-800 hover:bg-slate-850 text-slate-400 py-1.5 rounded-lg font-bold transition-all text-[11px]"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={actionLoading || unassignedStudents.length === 0}
+                            className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-1.5 rounded-lg font-bold transition-all text-[11px] disabled:opacity-50"
+                          >
+                            Assign Slot
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div className="flex justify-between items-center mt-1">
+                        <p className="text-slate-500 text-[11px]">No student assigned to this slot.</p>
+                        <button
+                          onClick={() => triggerInlineAssign('morning')}
+                          className="px-2.5 py-1 bg-indigo-650 hover:bg-indigo-550 text-white font-bold text-[10px] rounded-lg transition-all"
+                        >
+                          Assign Student
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="space-y-4 mb-6 border-b border-slate-800 pb-6">
-                <p className="text-slate-400 text-xs leading-normal">
-                  This desk is currently unoccupied. You can toggle its status between Available and Maintenance.
-                </p>
+
+              {/* Evening Shift Slot */}
+              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-850 space-y-3">
+                <div className="flex justify-between items-center pb-1.5 border-b border-slate-905">
+                  <span className="text-indigo-400 font-bold uppercase tracking-wider text-[10px]">Evening Shift (2 PM - 10 PM)</span>
+                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${selectedSeat.evening?.student ? 'bg-indigo-950/60 text-indigo-400' : 'bg-slate-900 text-slate-500'}`}>
+                    {selectedSeat.evening?.student ? 'Occupied' : 'Vacant'}
+                  </span>
+                </div>
+                {selectedSeat.evening?.student ? (
+                  <div className="space-y-2 text-slate-300">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Occupant:</span>
+                      <span className="text-white font-bold">{selectedSeat.evening.student.name} ({selectedSeat.evening.student.studentId})</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Phone:</span>
+                      <span className="text-white font-mono">{selectedSeat.evening.student.phone}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Expiry Date:</span>
+                      <span className="text-brand-400 font-bold">{new Date(selectedSeat.evening.expiryDate).toLocaleDateString()}</span>
+                    </div>
+                    <button
+                      onClick={() => handleVacateSeatSlot(selectedSeat._id, 'evening')}
+                      disabled={actionLoading}
+                      className="w-full bg-red-950/30 border border-red-900/40 hover:bg-red-950/50 text-red-400 py-1.5 rounded-lg font-bold transition-all text-[11px] mt-1.5"
+                    >
+                      Vacate Evening Slot
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    {assigningSlot === 'evening' ? (
+                      <form onSubmit={(e) => handleInlineAssign(e, 'evening')} className="mt-2.5 p-3 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
+                        <div>
+                          <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Select Student</label>
+                          {unassignedStudents.length === 0 ? (
+                            <p className="text-[10px] text-amber-500 font-medium">No unassigned active students found.</p>
+                          ) : (
+                            <select
+                              value={selectedStudentId}
+                              onChange={(e) => setSelectedStudentId(e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg px-2.5 py-1.5 text-[11px] focus:outline-none cursor-pointer"
+                            >
+                              {unassignedStudents.map((stu) => (
+                                <option key={stu._id} value={stu._id}>
+                                  {stu.name} ({stu.studentId})
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Select Plan</label>
+                          <select
+                            value={selectedPlanId}
+                            onChange={(e) => setSelectedPlanId(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg px-2.5 py-1.5 text-[11px] focus:outline-none cursor-pointer"
+                          >
+                            {plans.map((p) => (
+                              <option key={p._id} value={p._id}>
+                                {p.planName} (₹{p.price})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="flex space-x-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setAssigningSlot(null)}
+                            className="flex-1 bg-slate-950 border border-slate-800 hover:bg-slate-850 text-slate-400 py-1.5 rounded-lg font-bold transition-all text-[11px]"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={actionLoading || unassignedStudents.length === 0}
+                            className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-1.5 rounded-lg font-bold transition-all text-[11px] disabled:opacity-50"
+                          >
+                            Assign Slot
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div className="flex justify-between items-center mt-1">
+                        <p className="text-slate-500 text-[11px]">No student assigned to this slot.</p>
+                        <button
+                          onClick={() => triggerInlineAssign('evening')}
+                          className="px-2.5 py-1 bg-indigo-650 hover:bg-indigo-550 text-white font-bold text-[10px] rounded-lg transition-all"
+                        >
+                          Assign Student
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Full Time Slot */}
+              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-850 space-y-3">
+                <div className="flex justify-between items-center pb-1.5 border-b border-slate-905">
+                  <span className="text-indigo-400 font-bold uppercase tracking-wider text-[10px]">Full Time Slot (6 AM - 10 PM)</span>
+                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${selectedSeat.fullTime?.student ? 'bg-indigo-950/60 text-indigo-400' : 'bg-slate-900 text-slate-500'}`}>
+                    {selectedSeat.fullTime?.student ? 'Occupied' : 'Vacant'}
+                  </span>
+                </div>
+                {selectedSeat.fullTime?.student ? (
+                  <div className="space-y-2 text-slate-300">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Occupant:</span>
+                      <span className="text-white font-bold">{selectedSeat.fullTime.student.name} ({selectedSeat.fullTime.student.studentId})</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Phone:</span>
+                      <span className="text-white font-mono">{selectedSeat.fullTime.student.phone}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Expiry Date:</span>
+                      <span className="text-brand-400 font-bold">{new Date(selectedSeat.fullTime.expiryDate).toLocaleDateString()}</span>
+                    </div>
+                    <button
+                      onClick={() => handleVacateSeatSlot(selectedSeat._id, 'fullTime')}
+                      disabled={actionLoading}
+                      className="w-full bg-red-950/30 border border-red-900/40 hover:bg-red-950/50 text-red-400 py-1.5 rounded-lg font-bold transition-all text-[11px] mt-1.5"
+                    >
+                      Vacate Full Time Slot
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    {assigningSlot === 'fullTime' ? (
+                      <form onSubmit={(e) => handleInlineAssign(e, 'fullTime')} className="mt-2.5 p-3 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
+                        <div>
+                          <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Select Student</label>
+                          {unassignedStudents.length === 0 ? (
+                            <p className="text-[10px] text-amber-500 font-medium">No unassigned active students found.</p>
+                          ) : (
+                            <select
+                              value={selectedStudentId}
+                              onChange={(e) => setSelectedStudentId(e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg px-2.5 py-1.5 text-[11px] focus:outline-none cursor-pointer"
+                            >
+                              {unassignedStudents.map((stu) => (
+                                <option key={stu._id} value={stu._id}>
+                                  {stu.name} ({stu.studentId})
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Select Plan</label>
+                          <select
+                            value={selectedPlanId}
+                            onChange={(e) => setSelectedPlanId(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 text-white rounded-lg px-2.5 py-1.5 text-[11px] focus:outline-none cursor-pointer"
+                          >
+                            {plans.map((p) => (
+                              <option key={p._id} value={p._id}>
+                                {p.planName} (₹{p.price})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="flex space-x-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setAssigningSlot(null)}
+                            className="flex-1 bg-slate-950 border border-slate-800 hover:bg-slate-850 text-slate-400 py-1.5 rounded-lg font-bold transition-all text-[11px]"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={actionLoading || unassignedStudents.length === 0}
+                            className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-1.5 rounded-lg font-bold transition-all text-[11px] disabled:opacity-50"
+                          >
+                            Assign Slot
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div className="flex justify-between items-center mt-1">
+                        <p className="text-slate-500 text-[11px]">No student assigned to this slot.</p>
+                        <button
+                          onClick={() => triggerInlineAssign('fullTime')}
+                          className="px-2.5 py-1 bg-indigo-650 hover:bg-indigo-550 text-white font-bold text-[10px] rounded-lg transition-all"
+                        >
+                          Assign Student
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Maintenance Toggle */}
+              <div className="pt-2">
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Desk Maintenance</span>
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     onClick={() => handleUpdateStatus(selectedSeat._id, 'available')}
@@ -481,21 +851,23 @@ const AdminSeats = () => {
                         : 'border-slate-850 hover:bg-slate-850 text-slate-400'
                     }`}
                   >
-                    Set Available
+                    Set Active
                   </button>
                   <button
                     onClick={() => handleUpdateStatus(selectedSeat._id, 'maintenance')}
-                    className={`py-2 text-xs font-bold rounded-xl border transition-all ${
+                    disabled={!!selectedSeat.morning?.student || !!selectedSeat.evening?.student || !!selectedSeat.fullTime?.student}
+                    className={`py-2 text-xs font-bold rounded-xl border transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
                       selectedSeat.status === 'maintenance'
-                        ? 'border-slate-600 bg-slate-800/30 text-slate-350'
+                        ? 'border-slate-600 bg-slate-800/30 text-slate-355'
                         : 'border-slate-850 hover:bg-slate-850 text-slate-400'
                     }`}
+                    title={!!selectedSeat.morning?.student || !!selectedSeat.evening?.student || !!selectedSeat.fullTime?.student ? "Vacate all slots first" : ""}
                   >
                     Set Maintenance
                   </button>
                 </div>
               </div>
-            )}
+            </div>
 
             <button
               onClick={() => handleDeleteSeat(selectedSeat._id, selectedSeat.seatNumber)}

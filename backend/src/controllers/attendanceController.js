@@ -27,38 +27,49 @@ const checkInStudent = async (req, res) => {
 
     // Verify seat assignment is not expired
     const seat = await Seat.findById(student.assignedSeat);
-    if (seat && seat.expiryDate && new Date() > seat.expiryDate) {
+    if (!seat) {
+      return res.status(400).json({ message: 'Assigned seat record not found.' });
+    }
+
+    const shiftSlot = student.assignedShift || 'fullTime';
+    const assignment = seat[shiftSlot];
+
+    // Verify seat slot assignment matches student ID
+    if (!assignment || !assignment.student || assignment.student.toString() !== studentId.toString()) {
+      return res.status(400).json({ message: 'Seat assignment slot mismatch.' });
+    }
+
+    // Verify seat assignment is not expired
+    if (assignment.expiryDate && new Date() > assignment.expiryDate) {
       return res.status(403).json({
         message: 'Check-in blocked. Your seat membership has expired. Please pay your pending dues to resume access.',
       });
     }
 
     // Verify clock time matches seat shift restrictions
-    if (seat && seat.shift) {
-      const now = new Date();
-      const currentHour = now.getHours();
+    const now = new Date();
+    const currentHour = now.getHours();
 
-      if (seat.shift === 'morning') {
-        // Morning Shift: 6:00 AM - 2:00 PM
-        if (currentHour < 6 || currentHour >= 14) {
-          return res.status(403).json({
-            message: 'Check-in blocked. Your shift is Morning (6:00 AM - 2:00 PM). You cannot check in at this time.',
-          });
-        }
-      } else if (seat.shift === 'evening') {
-        // Evening Shift: 2:00 PM - 10:00 PM
-        if (currentHour < 14 || currentHour >= 22) {
-          return res.status(403).json({
-            message: 'Check-in blocked. Your shift is Evening (2:00 PM - 10:00 PM). You cannot check in at this time.',
-          });
-        }
-      } else if (seat.shift === 'full_day') {
-        // Full Day Shift: 6:00 AM - 10:00 PM
-        if (currentHour < 6 || currentHour >= 22) {
-          return res.status(403).json({
-            message: 'Check-in blocked. The library operational hours are 6:00 AM - 10:00 PM.',
-          });
-        }
+    if (shiftSlot === 'morning') {
+      // Morning Shift: 6:00 AM - 2:00 PM
+      if (currentHour < 6 || currentHour >= 14) {
+        return res.status(403).json({
+          message: 'Check-in blocked. Your shift is Morning (6:00 AM - 2:00 PM). You cannot check in at this time.',
+        });
+      }
+    } else if (shiftSlot === 'evening') {
+      // Evening Shift: 2:00 PM - 10:00 PM
+      if (currentHour < 14 || currentHour >= 22) {
+        return res.status(403).json({
+          message: 'Check-in blocked. Your shift is Evening (2:00 PM - 10:00 PM). You cannot check in at this time.',
+        });
+      }
+    } else if (shiftSlot === 'fullTime') {
+      // Full Time Shift: 6:00 AM - 10:00 PM
+      if (currentHour < 6 || currentHour >= 22) {
+        return res.status(403).json({
+          message: 'Check-in blocked. The library operational hours are 6:00 AM - 10:00 PM.',
+        });
       }
     }
 

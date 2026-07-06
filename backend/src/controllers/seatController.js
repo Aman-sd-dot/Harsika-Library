@@ -8,7 +8,10 @@ const Notification = require('../models/notificationModel');
 // @access  Private
 const getSeats = async (req, res) => {
   try {
-    const seats = await Seat.find({}).populate('assignedTo', 'name email phone studentId');
+    const seats = await Seat.find({})
+      .populate('morning.student', 'name email phone studentId')
+      .populate('evening.student', 'name email phone studentId')
+      .populate('fullTime.student', 'name email phone studentId');
     res.json(seats);
   } catch (error) {
     console.error(error);
@@ -37,8 +40,10 @@ const createSeat = async (req, res) => {
       seatNumber,
       floor,
       room,
-      shift: shift || 'full_day',
       status: 'available',
+      morning: { student: null, assignedDate: null, expiryDate: null },
+      evening: { student: null, assignedDate: null, expiryDate: null },
+      fullTime: { student: null, assignedDate: null, expiryDate: null },
     });
 
     res.status(201).json(seat);
@@ -149,7 +154,9 @@ const requestSeat = async (req, res) => {
 // @route   POST /api/seats/assign
 // @access  Private/Admin
 const assignSeat = async (req, res) => {
-  const { seatId, studentId, planId, months } = req.body;
+  const { seatId, studentId, planId, months, shift } = req.body;
+
+  const targetShift = shift || 'fullTime'; // 'morning', 'evening', 'fullTime'
 
   if (!seatId || !studentId) {
     return res.status(400).json({ message: 'Seat ID and Student ID are required' });
@@ -166,8 +173,29 @@ const assignSeat = async (req, res) => {
       return res.status(404).json({ message: 'Student not found' });
     }
 
-    if (seat.status !== 'available') {
-      return res.status(400).json({ message: 'Seat is not available for assignment' });
+    if (seat.status === 'maintenance') {
+      return res.status(400).json({ message: 'Seat is under maintenance' });
+    }
+
+    // Check if slot is occupied or blocked by fullTime
+    if (targetShift === 'morning') {
+      if (seat.morning?.student || seat.fullTime?.student) {
+        return res.status(400).json({ message: 'Seat is not available for Morning shift' });
+      }
+    } else if (targetShift === 'evening') {
+      if (seat.evening?.student || seat.fullTime?.student) {
+        return res.status(400).json({ message: 'Seat is not available for Evening shift' });
+      }
+    } else if (targetShift === 'fullTime') {
+      if (
+        seat.morning?.student ||
+        seat.evening?.student ||
+        seat.fullTime?.student
+      ) {
+        return res.status(400).json({ message: 'Seat is not available for Full-Time (shift slots are already occupied)' });
+      }
+    } else {
+      return res.status(400).json({ message: 'Invalid shift selection' });
     }
 
     if (student.assignedSeat) {
@@ -188,15 +216,18 @@ const assignSeat = async (req, res) => {
     const expiryDate = new Date();
     expiryDate.setMonth(expiryDate.getMonth() + durationMonths);
 
-    // Update Seat
+    // Update Seat Slot
+    seat[targetShift] = {
+      student: studentId,
+      assignedDate,
+      expiryDate,
+    };
     seat.status = 'occupied';
-    seat.assignedTo = studentId;
-    seat.assignedDate = assignedDate;
-    seat.expiryDate = expiryDate;
     await seat.save();
 
     // Update User
     student.assignedSeat = seatId;
+    student.assignedShift = targetShift;
     student.seatRequest.status = 'approved';
     await student.save();
 
@@ -204,7 +235,7 @@ const assignSeat = async (req, res) => {
     await Notification.create({
       recipient: studentId,
       title: 'Seat Assigned',
-      message: `Your request has been approved! Seat ${seat.seatNumber} (Floor: ${seat.floor}, Room: ${seat.room}) has been assigned to you. Expiry: ${expiryDate.toLocaleDateString()}.`,
+      message: `Your request has been approved! Seat ${seat.seatNumber} (Floor: ${seat.floor}, Room: ${seat.room}) has been assigned to you for the ${targetShift} shift. Expiry: ${expiryDate.toLocaleDateString()}.`,
       type: 'system',
     });
 
@@ -215,14 +246,14 @@ const assignSeat = async (req, res) => {
   }
 };
 
-// @desc    Vacate a seat (Admin)
+// @desc    Vacate a seat slot (Admin)
 // @route   POST /api/seats/vacate
 // @access  Private/Admin
 const vacateSeat = async (req, res) => {
-  const { seatId } = req.body;
+  const { seatId, shift } = req.body;
 
-  if (!seatId) {
-    return res.status(400).json({ message: 'Seat ID is required' });
+  if (!seatId || !shift) {
+    return res.status(400).json({ message: 'Seat ID and Shift Slot are required' });
   }
 
   try {
@@ -232,12 +263,13 @@ const vacateSeat = async (req, res) => {
       return res.status(404).json({ message: 'Seat not found' });
     }
 
-    const studentId = seat.assignedTo;
+    const studentId = seat[shift]?.student;
 
     if (studentId) {
       const student = await User.findById(studentId);
       if (student) {
         student.assignedSeat = null;
+        student.assignedShift = 'none';
         student.seatRequest.status = 'none'; // reset seat request
         await student.save();
 
@@ -245,19 +277,30 @@ const vacateSeat = async (req, res) => {
         await Notification.create({
           recipient: studentId,
           title: 'Seat Vacated',
-          message: `Your assignment on Seat ${seat.seatNumber} has been vacated.`,
+          message: `Your assignment on Seat ${seat.seatNumber} (${shift} shift) has been vacated.`,
           type: 'system',
         });
       }
     }
 
-    seat.status = 'available';
-    seat.assignedTo = null;
-    seat.assignedDate = null;
-    seat.expiryDate = null;
+    // Vacate the specific slot in DB
+    seat[shift] = {
+      student: null,
+      assignedDate: null,
+      expiryDate: null,
+    };
+
+    // Recalculate overall status
+    if (
+      (!seat.morning || !seat.morning.student) &&
+      (!seat.evening || !seat.evening.student) &&
+      (!seat.fullTime || !seat.fullTime.student)
+    ) {
+      seat.status = 'available';
+    }
     await seat.save();
 
-    res.json({ message: 'Seat vacated successfully', seat });
+    res.json({ message: 'Seat slot vacated successfully', seat });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
