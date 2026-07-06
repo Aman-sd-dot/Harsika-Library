@@ -23,6 +23,11 @@ const seatSchema = new mongoose.Schema(
       enum: ['available', 'occupied', 'maintenance'],
       default: 'available',
     },
+    shift: {
+      type: String,
+      enum: ['morning', 'evening', 'full_day'],
+      default: 'full_day',
+    },
     assignedTo: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',

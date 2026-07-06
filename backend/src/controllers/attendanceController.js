@@ -33,6 +33,35 @@ const checkInStudent = async (req, res) => {
       });
     }
 
+    // Verify clock time matches seat shift restrictions
+    if (seat && seat.shift) {
+      const now = new Date();
+      const currentHour = now.getHours();
+
+      if (seat.shift === 'morning') {
+        // Morning Shift: 6:00 AM - 2:00 PM
+        if (currentHour < 6 || currentHour >= 14) {
+          return res.status(403).json({
+            message: 'Check-in blocked. Your shift is Morning (6:00 AM - 2:00 PM). You cannot check in at this time.',
+          });
+        }
+      } else if (seat.shift === 'evening') {
+        // Evening Shift: 2:00 PM - 10:00 PM
+        if (currentHour < 14 || currentHour >= 22) {
+          return res.status(403).json({
+            message: 'Check-in blocked. Your shift is Evening (2:00 PM - 10:00 PM). You cannot check in at this time.',
+          });
+        }
+      } else if (seat.shift === 'full_day') {
+        // Full Day Shift: 6:00 AM - 10:00 PM
+        if (currentHour < 6 || currentHour >= 22) {
+          return res.status(403).json({
+            message: 'Check-in blocked. The library operational hours are 6:00 AM - 10:00 PM.',
+          });
+        }
+      }
+    }
+
     const existingRecord = await Attendance.findOne({ student: studentId, date: todayStr });
 
     if (existingRecord) {

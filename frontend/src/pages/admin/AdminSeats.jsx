@@ -19,7 +19,8 @@ const AdminSeats = () => {
   
   // Create Seat Modal
   const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [newSeat, setNewSeat] = useState({ seatNumber: '', floor: 'Floor 1', room: 'Room A' });
+  const [newSeat, setNewSeat] = useState({ seatNumber: '', floor: 'Floor 1', room: 'Room A', shift: 'full_day' });
+  const [shiftFilter, setShiftFilter] = useState('all'); // 'all', 'morning', 'evening', 'full_day'
   
   // Seat Details / Edit Modal
   const [selectedSeat, setSelectedSeat] = useState(null);
@@ -73,7 +74,7 @@ const AdminSeats = () => {
 
       setSuccess(`Seat ${newSeat.seatNumber} created successfully.`);
       setCreateModalOpen(false);
-      setNewSeat({ seatNumber: '', floor: activeFloor, room: 'Room A' });
+      setNewSeat({ seatNumber: '', floor: activeFloor, room: 'Room A', shift: 'full_day' });
       fetchSeats();
     } catch (err) {
       setError(err.message);
@@ -167,8 +168,12 @@ const AdminSeats = () => {
     setDetailModalOpen(true);
   };
 
-  // Filter seats by floor
-  const floorSeats = seats.filter((s) => s.floor === activeFloor);
+  // Filter seats by floor and shift
+  const filteredSeats = seats.filter((s) => {
+    const matchesFloor = s.floor === activeFloor;
+    const matchesShift = shiftFilter === 'all' ? true : s.shift === shiftFilter;
+    return matchesFloor && matchesShift;
+  });
 
   return (
     <div className="space-y-6">
@@ -200,21 +205,39 @@ const AdminSeats = () => {
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex border-b border-slate-900 space-x-4">
-        {['Floor 1', 'Floor 2'].map((floor) => (
-          <button
-            key={floor}
-            onClick={() => setActiveFloor(floor)}
-            className={`pb-3 font-bold text-sm transition-all border-b-2 px-1 ${
-              activeFloor === floor
-                ? 'border-indigo-500 text-white font-extrabold'
-                : 'border-transparent text-slate-400 hover:text-white'
-            }`}
+      {/* Tabs and Filter */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-900 pb-3 gap-4">
+        {/* Floor Tabs */}
+        <div className="flex space-x-4">
+          {['Floor 1', 'Floor 2'].map((floor) => (
+            <button
+              key={floor}
+              onClick={() => setActiveFloor(floor)}
+              className={`pb-1 font-bold text-sm transition-all border-b-2 px-1 ${
+                activeFloor === floor
+                  ? 'border-indigo-500 text-white font-extrabold'
+                  : 'border-transparent text-slate-400 hover:text-white'
+              }`}
+            >
+              {floor}
+            </button>
+          ))}
+        </div>
+
+        {/* Shift Filter Dropdown */}
+        <div className="flex items-center space-x-2 text-xs">
+          <span className="text-slate-500 font-bold uppercase tracking-wider text-[10px] font-mono">Filter Shift:</span>
+          <select
+            value={shiftFilter}
+            onChange={(e) => setShiftFilter(e.target.value)}
+            className="bg-slate-950 border border-slate-800 text-slate-200 rounded-lg px-3 py-1.5 focus:outline-none cursor-pointer text-xs font-semibold"
           >
-            {floor}
-          </button>
-        ))}
+            <option value="all">All Shifts</option>
+            <option value="full_day">Full Day</option>
+            <option value="morning">Morning (6 AM - 2 PM)</option>
+            <option value="evening">Evening (2 PM - 10 PM)</option>
+          </select>
+        </div>
       </div>
 
       {/* Legend Row */}
@@ -240,20 +263,18 @@ const AdminSeats = () => {
           <span className="h-2.5 w-2.5 rounded-full bg-slate-500" />
           <span>Maintenance</span>
         </div>
-      </div>
-
-      {/* Grid */}
+      </div>      {/* Grid */}
       {loading ? (
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4">
           {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
             <div key={n} className="h-20 bg-slate-900/35 border border-slate-850 rounded-xl animate-pulse"></div>
           ))}
         </div>
-      ) : floorSeats.length === 0 ? (
-        <div className="text-center py-12 text-slate-500 text-sm">No seats registered on {activeFloor} yet.</div>
+      ) : filteredSeats.length === 0 ? (
+        <div className="text-center py-12 text-slate-500 text-sm">No matching seats registered on {activeFloor} for this shift.</div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-4">
-          {floorSeats.map((seat) => {
+          {filteredSeats.map((seat) => {
             const isOccupied = seat.status === 'occupied';
             const isMaint = seat.status === 'maintenance';
             
@@ -262,7 +283,7 @@ const AdminSeats = () => {
             let dotColorClass = 'bg-emerald-500';
 
             if (isMaint) {
-              seatColorClass = 'bg-slate-900/40 border-slate-850 hover:bg-slate-850/65 text-slate-450';
+              seatColorClass = 'bg-slate-900/40 border-slate-850 hover:bg-slate-850/65 text-slate-455';
               dotColorClass = 'bg-slate-500';
             } else if (isOccupied) {
               const today = new Date();
@@ -300,7 +321,7 @@ const AdminSeats = () => {
                 <div>
                   <h4 className="text-lg font-extrabold text-white">Desk {seat.seatNumber.split('-')[1] || seat.seatNumber}</h4>
                   <p className="text-[10px] text-slate-400 capitalize mt-0.5 truncate max-w-full">
-                    {isOccupied ? seat.assignedTo?.name || 'Occupied' : seat.status}
+                    {seat.shift === 'full_day' ? 'Full Day' : seat.shift + ' shift'} • {isOccupied ? seat.assignedTo?.name || 'Occupied' : seat.status}
                   </p>
                 </div>
               </button>
@@ -365,6 +386,19 @@ const AdminSeats = () => {
                 </div>
               </div>
 
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Shift Allocation</label>
+                <select
+                  value={newSeat.shift}
+                  onChange={(e) => setNewSeat({ ...newSeat, shift: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none cursor-pointer"
+                >
+                  <option value="full_day">Full Day (6:00 AM - 10:00 PM)</option>
+                  <option value="morning">Morning Shift (6:00 AM - 2:00 PM)</option>
+                  <option value="evening">Evening Shift (2:00 PM - 10:00 PM)</option>
+                </select>
+              </div>
+
               <button
                 type="submit"
                 disabled={actionLoading}
@@ -393,7 +427,7 @@ const AdminSeats = () => {
               <span>Desk {selectedSeat.seatNumber}</span>
             </h3>
             <p className="text-slate-450 text-xs mb-6 font-mono">
-              {selectedSeat.floor} • {selectedSeat.room}
+              {selectedSeat.floor} • {selectedSeat.room} • <span className="capitalize font-bold text-slate-300">{selectedSeat.shift.replace('_', ' ')}</span>
             </p>
 
             {selectedSeat.status === 'occupied' && selectedSeat.assignedTo ? (

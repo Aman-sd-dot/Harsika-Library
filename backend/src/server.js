@@ -50,30 +50,46 @@ const seedData = async () => {
     // Floor 1 (Desks A-01 to A-50)
     for (let i = 1; i <= 50; i++) {
       const seatNum = `A-${String(i).padStart(2, '0')}`;
-      const exists = await Seat.findOne({ seatNumber: seatNum });
-      if (!exists) {
+      const shift = i <= 20 ? 'full_day' : 'morning';
+
+      let seat = await Seat.findOne({ seatNumber: seatNum });
+      if (!seat) {
         await Seat.create({
           seatNumber: seatNum,
           floor: 'Floor 1',
           room: 'Room A',
+          shift,
           status: 'available',
         });
         seatsAdded++;
+      } else {
+        if (seat.shift !== shift) {
+          seat.shift = shift;
+          await seat.save();
+        }
       }
     }
 
     // Floor 2 (Desks B-01 to B-50)
     for (let i = 1; i <= 50; i++) {
       const seatNum = `B-${String(i).padStart(2, '0')}`;
-      const exists = await Seat.findOne({ seatNumber: seatNum });
-      if (!exists) {
+      const shift = i <= 30 ? 'evening' : 'full_day';
+
+      let seat = await Seat.findOne({ seatNumber: seatNum });
+      if (!seat) {
         await Seat.create({
           seatNumber: seatNum,
           floor: 'Floor 2',
           room: 'Room B',
+          shift,
           status: i % 10 === 0 ? 'maintenance' : 'available',
         });
         seatsAdded++;
+      } else {
+        if (seat.shift !== shift) {
+          seat.shift = shift;
+          await seat.save();
+        }
       }
     }
 

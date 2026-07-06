@@ -431,7 +431,7 @@ const AdminStudents = () => {
                   >
                     {seats.map((s) => (
                       <option key={s._id} value={s._id}>
-                        Seat {s.seatNumber} — {s.floor} ({s.room})
+                        Seat {s.seatNumber} — {s.floor} ({s.room}) — {s.shift === 'full_day' ? 'Full Day' : s.shift + ' shift'}
                       </option>
                     ))}
                   </select>
@@ -549,7 +549,7 @@ const AdminStudents = () => {
                       <option value="">No Seat (None)</option>
                       {seats.map((s) => (
                         <option key={s._id} value={s._id}>
-                          Seat {s.seatNumber} — {s.floor} ({s.room})
+                          Seat {s.seatNumber} — {s.floor} ({s.room}) — {s.shift === 'full_day' ? 'Full Day' : s.shift + ' shift'}
                         </option>
                       ))}
                     </select>

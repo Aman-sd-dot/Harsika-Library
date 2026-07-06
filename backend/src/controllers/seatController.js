@@ -20,7 +20,7 @@ const getSeats = async (req, res) => {
 // @route   POST /api/seats
 // @access  Private/Admin
 const createSeat = async (req, res) => {
-  const { seatNumber, floor, room } = req.body;
+  const { seatNumber, floor, room, shift } = req.body;
 
   if (!seatNumber || !floor || !room) {
     return res.status(400).json({ message: 'Please enter all fields' });
@@ -37,6 +37,7 @@ const createSeat = async (req, res) => {
       seatNumber,
       floor,
       room,
+      shift: shift || 'full_day',
       status: 'available',
     });
 
